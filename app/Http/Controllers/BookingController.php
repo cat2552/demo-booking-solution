@@ -5,73 +5,103 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreBookingRequest;
 use App\Models\Booking;
 use App\Models\Room;
+use App\Services\BookingService;
+use App\Exceptions\RoomUnavailableException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\Log;
+use Carbon\CarbonImmutable;
+use Symfony\Component\HttpFoundation\Response;
 
 class BookingController extends Controller
 {
-    public function index(Request $request) {
-        return Booking::where('user_id', $request->user()->id)->orderByRaw('starts_at DESC')->paginate(20);
+    /**
+     * Внедряем сервис через конструктор.
+     * Теперь вся бизнес-логика создания брони инкапсулирована в BookingService.
+     */
+    public function __construct(
+        protected BookingService $bookingService
+    ) {}
+
+    /**
+     * Список броней текущего пользователя.
+     */
+    public function index(Request $request): JsonResponse
+    {
+        $bookings = Booking::where('user_id', $request->user()->id)
+            ->orderByRaw('starts_at DESC')
+            ->paginate(20);
+
+        return response()->json($bookings);
     }
 
-    public function store(StoreBookingRequest $request) {
+    /**
+     * Создание бронирования.
+     */
+    public function store(StoreBookingRequest $request): JsonResponse
+    {
         try {
-            return DB::transaction(function () use ($request) {
-                $room = Room::findOrFail($request->room_id);
-                Room::where('id', $room->id)->lockForUpdate()->first();
+            // ИСПОЛЬЗУЕМ СЕРВИС: Теперь контроллер не создает запись напрямую,
+            // а делегирует это сервису. Это решает проблему «мертвого кода».
+            $booking = $this->bookingService->createBooking(
+                $request->user()->id,
+                $request->validated()
+            );
 
-                $conflict = Booking::where('room_id', $room->id)
-                    ->where('starts_at', '<', $request->endsAt())
-                    ->where('ends_at', '>', $request->startsAt())
-                    ->exists();
+            Log::channel('bookings')->info('Booking created', [
+                'booking_id' => $booking->id,
+                'user_id' => $booking->user_id,
+            ]);
 
-                if ($conflict) return response()->json(['error' => 'Комната занята'], 409);
+            return response()->json($booking, 201);
 
-                $booking = Booking::create([
-                    'room_id' => $room->id,
-                    'user_id' => $request->user()->id,
-                    'title' => $request->title,
-                    'starts_at' => $request->startsAt(),
-                    'ends_at' => $request->endsAt(),
-                ]);
-
-                // ВОЗВРАЩАЕМ ЛОГИРОВАНИЕ
-                Log::channel('bookings')->info('Booking created', [
-                    'booking_id' => $booking->id,
-                    'user_id' => $booking->user_id,
-                    'room_id' => $booking->room_id,
-                ]);
-
-                return response()->json($booking, 201);
-            });
-        } catch (\Exception $e) {
-            // Также логируем ошибку, чтобы знать, почему упал запрос
-            Log::error("Booking creation failed: " . $e->getMessage());
-            if (str_contains($e->getMessage(), 'exclusion constraint')) {
-                return response()->json(['error' => 'Комната занята'], 409);
-            }
-            return response()->json(['error' => 'Ошибка сервера'], 500);
+        } catch (RoomUnavailableException $e) {
+            // Перехватываем кастомное исключение из сервиса (вызванное триггером БД)
+            return response()->json(['error' => $e->getMessage()], 409);
+        } catch (\Throwable $e) {
+            // Логируем неожиданную ошибку и возвращаем чистый 500-й ответ
+            Log::error("Critical error during booking: " . $e->getMessage());
+            return response()->json(['error' => 'Внутренняя ошибка сервера'], 500);
         }
     }
 
-    public function destroy(Request $request, $id) {
+    /**
+     * Отмена бронирования.
+     */
+    public function destroy(Request $request, $id): Response
+    {
         try {
             $booking = Booking::findOrFail($id);
-            if ($booking->user_id !== $request->user()->id) return response()->json(['error' => 'Forbidden'], 403);
+
+            if ($booking->user_id !== $request->user()->id) {
+                return response()->json(['error' => 'Вы можете отменить только свои бронирования'], 403);
+            }
+
             $booking->delete();
             return response()->noContent();
+
         } catch (ModelNotFoundException $e) {
-            return response()->json(['error' => 'Not Found'], 404);
+            return response()->json(['error' => 'Бронирование не найдено'], 404);
         }
     }
 
-    public function today(Room $room) {
+    /**
+     * Брони комнаты на сегодня.
+     */
+    public function today(Room $room): JsonResponse
+    {
         $timezone = $room->office->timezone;
-        return $room->bookings()
-            ->whereDate('starts_at', \Carbon\Carbon::today($timezone))
+        $today = CarbonImmutable::today($timezone);
+
+        $bookings = $room->bookings()
+            ->whereDate('starts_at', $today)
             ->get()
-            ->map(fn ($b) => ['time' => $b->starts_at->setTimezone($timezone)->format('H:i') . ' – ' . $b->ends_at->setTimezone($timezone)->format('H:i'), 'author' => $b->user->name]);
+            ->map(fn ($b) => [
+                'time' => $b->starts_at->setTimezone($timezone)->format('H:i') . ' – ' . $b->ends_at->setTimezone($timezone)->format('H:i'),
+                'author' => $b->user->name,
+            ]);
+
+        return response()->json($bookings);
     }
 }
