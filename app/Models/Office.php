@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\CarbonImmutable;
 use Database\Factories\OfficeFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -13,6 +14,9 @@ class Office extends Model
 {
     /** @use HasFactory<OfficeFactory> */
     use HasFactory;
+
+    public const string OPENS_AT = '09:00';
+    public const string CLOSES_AT = '20:00';
 
     public function rooms(): HasMany
     {

@@ -14,6 +14,9 @@ class Booking extends Model
     /** @use HasFactory<BookingFactory> */
     use HasFactory;
 
+    public const int STEP_MINUTES = 15;
+    public const int MAX_DURATION_MINUTES = 240;
+
     protected function casts(): array
     {
         return [
