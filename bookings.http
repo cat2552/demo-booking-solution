@@ -1,0 +1,348 @@
+### Переменные
+@baseUrl = http://localhost:8000/api
+@annaToken = anna-token
+@borisToken = boris-token
+# Объявляем переменные заранее, чтобы IDE не блокировала запуск всего файла
+@anna_id =
+@boris_id =
+
+### 1. Мои брони (Анна)
+GET {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+
+### 2. Создание валидной брони Анны (Основа для тестов)
+< {%
+    const now = new Date();
+    let targetDate = new Date(now);
+    if (now.getUTCHours() >= 14) {
+        targetDate.setUTCDate(now.getUTCDate() + 1);
+    }
+    const year = targetDate.getFullYear();
+    const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const day = String(targetDate.getDate()).padStart(2, '0');
+
+    const startStr = `${year}-${month}-${day}T07:00:00Z`;
+    const endStr = `${year}-${month}-${day}T08:00:00Z`;
+
+    client.global.set("anna_start", startStr);
+    client.global.set("anna_end", endStr);
+
+    const start = new Date(startStr);
+    const end = new Date(endStr);
+    const cStart = new Date(start.getTime() + 15 * 60 * 1000);
+    const cEnd = new Date(end.getTime() + 15 * 60 * 1000);
+    client.global.set("conflict_start", cStart.toISOString());
+    client.global.set("conflict_end", cEnd.toISOString());
+
+    const tStart = new Date(end);
+    const tEnd = new Date(end.getTime() + 60 * 60 * 1000);
+    client.global.set("touching_start", tStart.toISOString());
+    client.global.set("touching_end", tEnd.toISOString());
+%}
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 1,
+    "title": "Базовая встреча Анны",
+    "starts_at": "{{anna_start}}",
+    "ends_at": "{{anna_end}}"
+}
+
+> {%
+    if (response.status === 201) {
+        client.global.set("anna_id", response.body.id);
+    }
+%}
+
+### 3. Создание валидной брони Бориса (Для теста удаления чужой брони)
+< {%
+    const now = new Date();
+    let targetDate = new Date(now);
+    if (now.getUTCHours() >= 14) {
+        targetDate.setUTCDate(now.getUTCDate() + 1);
+    }
+    const year = targetDate.getFullYear();
+    const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const day = String(targetDate.getDate()).padStart(2, '0');
+
+    const startStr = `${year}-${month}-${day}T03:00:00Z`;
+    const endStr = `${year}-${month}-${day}T04:00:00Z`;
+
+    client.global.set("boris_start", startStr);
+    client.global.set("boris_end", endStr);
+%}
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{borisToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 2,
+    "title": "Встреча Бориса",
+    "starts_at": "{{boris_start}}",
+    "ends_at": "{{boris_end}}"
+}
+
+> {%
+    if (response.status === 201) {
+        client.global.set("boris_id", response.body.id);
+    }
+%}
+
+### 4. Создание брони в прошлом (Ошибка 422)
+< {%
+    const past = new Date();
+    past.setFullYear(past.getFullYear() - 1);
+    const year = past.getFullYear();
+    const month = String(past.getMonth() + 1).padStart(2, '0');
+    const day = String(past.getDate()).padStart(2, '0');
+
+    client.global.set("past_start", `${year}-${month}-${day}T07:00:00Z`);
+    client.global.set("past_end", `${year}-${month}-${day}T08:00:00Z`);
+%}
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 1,
+    "title": "Встреча в прошлом",
+    "starts_at": "{{past_start}}",
+    "ends_at": "{{past_end}}"
+}
+
+### 5. Создание конфликтующей брони (Ошибка 409)
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{borisToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 1,
+    "title": "Конфликтная встреча",
+    "starts_at": "{{conflict_start}}",
+    "ends_at": "{{conflict_end}}"
+}
+
+### 6. Создание брони «впритык» (Успех 201)
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{borisToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 1,
+    "title": "Встреча сразу после",
+    "starts_at": "{{touching_start}}",
+    "ends_at": "{{touching_end}}"
+}
+
+### 7. Бронирование вне рабочего времени (Ошибка 422)
+< {%
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+
+    client.global.set("night_start", `${year}-${month}-${day}T14:00:00Z`);
+    client.global.set("night_end", `${year}-${month}-${day}T15:00:00Z`);
+%}
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 4,
+    "title": "Ночная встреча",
+    "starts_at": "{{night_start}}",
+    "ends_at": "{{night_end}}"
+}
+
+### 8. Удаление своей брони (Успех 204)
+DELETE {{baseUrl}}/bookings/{{anna_id}}
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+
+### 9. Удаление чужой брони (Ошибка 403)
+DELETE {{baseUrl}}/bookings/{{boris_id}}
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+
+### 10. Брони комнаты на сегодня (Москва)
+GET {{baseUrl}}/rooms/1/bookings/today
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+
+### 11. Брони комнаты на сегодня (Новосибирск)
+GET {{baseUrl}}/rooms/4/bookings/today
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+
+### 12. Брони для несуществующей комнаты (Ошибка 404)
+GET {{baseUrl}}/rooms/999/bookings/today
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+
+### 13. Запрос без авторизации (Ошибка 401/500)
+GET {{baseUrl}}/rooms/1/bookings/today
+Accept: application/json
+
+### 14. Слишком короткая встреча (< 15 минут) - Ошибка 422
+< {%
+    const now = new Date();
+    let targetDate = new Date(now);
+    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
+    const dateStr = targetDate.toISOString().split('T')[0];
+
+    client.global.set("short_start", `${dateStr}T10:00:00Z`);
+    client.global.set("short_end", `${dateStr}T10:10:00Z`);
+%}
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 1,
+    "title": "Слишком короткая",
+    "starts_at": "{{short_start}}",
+    "ends_at": "{{short_end}}"
+}
+
+### 15. Слишком длинная встреча (> 4 часов) - Ошибка 422
+< {%
+    const now = new Date();
+    let targetDate = new Date(now);
+    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
+    const dateStr = targetDate.toISOString().split('T')[0];
+
+    client.global.set("long_start", `${dateStr}T10:00:00Z`);
+    client.global.set("long_end", `${dateStr}T15:00:00Z`);
+%}
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 1,
+    "title": "Слишком длинная",
+    "starts_at": "{{long_start}}",
+    "ends_at": "{{long_end}}"
+}
+
+### 16. Нарушение шага 15 минут (например, 10:07) - Ошибка 422
+< {%
+    const now = new Date();
+    let targetDate = new Date(now);
+    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
+    const dateStr = targetDate.toISOString().split('T')[0];
+
+    client.global.set("bad_step_start", `${dateStr}T10:07:00Z`);
+    client.global.set("bad_step_end", `${dateStr}T11:00:00Z`);
+%}
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 1,
+    "title": "Плохой шаг времени",
+    "starts_at": "{{bad_step_start}}",
+    "ends_at": "{{bad_step_end}}"
+}
+
+### 17. Вне рабочего времени (слишком поздно) - Ошибка 422
+< {%
+    const now = new Date();
+    let targetDate = new Date(now);
+    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
+    const dateStr = targetDate.toISOString().split('T')[0];
+
+    // Для Москвы (UTC+3) 21:00 локальное = 18:00 UTC.
+    // Рабочее время до 20:00 локального (17:00 UTC).
+    client.global.set("late_start", `${dateStr}T18:00:00Z`);
+    client.global.set("late_end", `${dateStr}T19:00:00Z`);
+%}
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 1,
+    "title": "Поздняя встреча",
+    "starts_at": "{{late_start}}",
+    "ends_at": "{{late_end}}"
+}
+
+### 18. Вне рабочего времени (слишком рано) - Ошибка 422
+< {%
+    const now = new Date();
+    let targetDate = new Date(now);
+    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
+    const dateStr = targetDate.toISOString().split('T')[0];
+
+    // Для Москвы (UTC+3) 08:00 локальное = 05:00 UTC.
+    // Рабочее время от 09:00 локального (06:00 UTC).
+    client.global.set("early_start", `${dateStr}T05:00:00Z`);
+    client.global.set("early_end", `${dateStr}T06:00:00Z`);
+%}
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 1,
+    "title": "Слишком ранняя встреча",
+    "starts_at": "{{early_start}}",
+    "ends_at": "{{early_end}}"
+}
+
+### 19. Невалидный формат ISO 8601 (без смещения/Z) - Ошибка 422
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 1,
+    "title": "Ошибка формата",
+    "starts_at": "2026-11-10 10:00:00",
+    "ends_at": "2026-11-10 11:00:00"
+}
+
+### 20. Создание брони в несуществующей комнате - Ошибка 404
+< {%
+    const now = new Date();
+    let targetDate = new Date(now);
+    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
+    const dateStr = targetDate.toISOString().split('T')[0];
+
+    client.global.set("ghost_start", `${dateStr}T10:00:00Z`);
+    client.global.set("ghost_end", `${dateStr}T11:00:00Z`);
+%}
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{annaToken}}
+Accept: application/json
+Content-Type: application/json
+
+{
+    "room_id": 9999,
+    "title": "Комната-призрак",
+    "starts_at": "{{ghost_start}}",
+    "ends_at": "{{ghost_end}}"
+}
+
+### 21. Удаление несуществующей брони - Ошибка 404
+DELETE {{baseUrl}}/bookings/999999
+Authorization: Bearer {{annaToken}}
+Accept: application/json
