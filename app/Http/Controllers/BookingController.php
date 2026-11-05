@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\BookingValidationException;
 use App\Http\Requests\StoreBookingRequest;
 use App\Models\Booking;
 use App\Models\Room;
@@ -56,13 +57,12 @@ class BookingController extends Controller
 
             return response()->json($booking, 201);
 
+        } catch (BookingValidationException $e) {
+            return response()->json(['errors' => $e->getErrors()], 422);
         } catch (RoomUnavailableException $e) {
-            // Перехватываем кастомное исключение из сервиса (вызванное триггером БД)
-            return response()->json(['error' => $e->getMessage()], 409);
+            return response()->json(['error' => 'Комната занята'], 409);
         } catch (\Throwable $e) {
-            // Логируем неожиданную ошибку и возвращаем чистый 500-й ответ
-            Log::error("Critical error during booking: " . $e->getMessage());
-            return response()->json(['error' => 'Внутренняя ошибка сервера'], 500);
+            return response()->json(['error' => 'Server Error'], 500);
         }
     }
 
