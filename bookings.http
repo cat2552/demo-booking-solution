@@ -12,18 +12,12 @@ Authorization: Bearer {{annaToken}}
 Accept: application/json
 
 ### 2. Создание валидной брони Анны (Основа для тестов)
+# Запросы 2–9 зависят друг от друга: запускать по порядку на чистой базе (migrate:fresh --seed)
 < {%
-    const now = new Date();
-    let targetDate = new Date(now);
-    if (now.getUTCHours() >= 14) {
-        targetDate.setUTCDate(now.getUTCDate() + 1);
-    }
-    const year = targetDate.getFullYear();
-    const month = String(targetDate.getMonth() + 1).padStart(2, '0');
-    const day = String(targetDate.getDate()).padStart(2, '0');
+    const dateStr = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // завтра (UTC)
 
-    const startStr = `${year}-${month}-${day}T07:00:00Z`;
-    const endStr = `${year}-${month}-${day}T08:00:00Z`;
+    const startStr = `${dateStr}T07:00:00Z`;
+    const endStr = `${dateStr}T08:00:00Z`;
 
     client.global.set("anna_start", startStr);
     client.global.set("anna_end", endStr);
@@ -60,17 +54,11 @@ Content-Type: application/json
 
 ### 3. Создание валидной брони Бориса (Для теста удаления чужой брони)
 < {%
-    const now = new Date();
-    let targetDate = new Date(now);
-    if (now.getUTCHours() >= 14) {
-        targetDate.setUTCDate(now.getUTCDate() + 1);
-    }
-    const year = targetDate.getFullYear();
-    const month = String(targetDate.getMonth() + 1).padStart(2, '0');
-    const day = String(targetDate.getDate()).padStart(2, '0');
+    const dateStr = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // завтра (UTC)
 
-    const startStr = `${year}-${month}-${day}T03:00:00Z`;
-    const endStr = `${year}-${month}-${day}T04:00:00Z`;
+    // Комната 2 в Москве: 07:00Z = 10:00 MSK (раньше было 03:00Z = 06:00 MSK — вне рабочего времени)
+    const startStr = `${dateStr}T07:00:00Z`;
+    const endStr = `${dateStr}T08:00:00Z`;
 
     client.global.set("boris_start", startStr);
     client.global.set("boris_end", endStr);
@@ -144,13 +132,10 @@ Content-Type: application/json
 
 ### 7. Бронирование вне рабочего времени (Ошибка 422)
 < {%
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-
-    client.global.set("night_start", `${year}-${month}-${day}T14:00:00Z`);
-    client.global.set("night_end", `${year}-${month}-${day}T15:00:00Z`);
+    const dateStr = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // завтра (UTC)
+    // Комната 4 в Новосибирске (UTC+7): 14:00Z = 21:00 локального
+    client.global.set("night_start", `${dateStr}T14:00:00Z`);
+    client.global.set("night_end", `${dateStr}T15:00:00Z`);
 %}
 POST {{baseUrl}}/bookings
 Authorization: Bearer {{annaToken}}
@@ -189,19 +174,17 @@ GET {{baseUrl}}/rooms/999/bookings/today
 Authorization: Bearer {{annaToken}}
 Accept: application/json
 
-### 13. Запрос без авторизации (Ошибка 401/500)
+### 13. Запрос без авторизации (Ошибка 401; без Accept будет 500)
 GET {{baseUrl}}/rooms/1/bookings/today
 Accept: application/json
 
-### 14. Слишком короткая встреча (< 15 минут) - Ошибка 422
+### 14. Слишком короткая встреча (0 минут) - Ошибка 422
+# 10:00–10:10 не подходит: упадёт раньше, на проверке шага 15 минут
 < {%
-    const now = new Date();
-    let targetDate = new Date(now);
-    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
-    const dateStr = targetDate.toISOString().split('T')[0];
+    const dateStr = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // завтра (UTC)
 
     client.global.set("short_start", `${dateStr}T10:00:00Z`);
-    client.global.set("short_end", `${dateStr}T10:10:00Z`);
+    client.global.set("short_end", `${dateStr}T10:00:00Z`);
 %}
 POST {{baseUrl}}/bookings
 Authorization: Bearer {{annaToken}}
@@ -217,10 +200,7 @@ Content-Type: application/json
 
 ### 15. Слишком длинная встреча (> 4 часов) - Ошибка 422
 < {%
-    const now = new Date();
-    let targetDate = new Date(now);
-    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
-    const dateStr = targetDate.toISOString().split('T')[0];
+    const dateStr = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // завтра (UTC)
 
     client.global.set("long_start", `${dateStr}T10:00:00Z`);
     client.global.set("long_end", `${dateStr}T15:00:00Z`);
@@ -239,10 +219,7 @@ Content-Type: application/json
 
 ### 16. Нарушение шага 15 минут (например, 10:07) - Ошибка 422
 < {%
-    const now = new Date();
-    let targetDate = new Date(now);
-    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
-    const dateStr = targetDate.toISOString().split('T')[0];
+    const dateStr = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // завтра (UTC)
 
     client.global.set("bad_step_start", `${dateStr}T10:07:00Z`);
     client.global.set("bad_step_end", `${dateStr}T11:00:00Z`);
@@ -261,10 +238,7 @@ Content-Type: application/json
 
 ### 17. Вне рабочего времени (слишком поздно) - Ошибка 422
 < {%
-    const now = new Date();
-    let targetDate = new Date(now);
-    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
-    const dateStr = targetDate.toISOString().split('T')[0];
+    const dateStr = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // завтра (UTC)
 
     // Для Москвы (UTC+3) 21:00 локальное = 18:00 UTC.
     // Рабочее время до 20:00 локального (17:00 UTC).
@@ -285,10 +259,7 @@ Content-Type: application/json
 
 ### 18. Вне рабочего времени (слишком рано) - Ошибка 422
 < {%
-    const now = new Date();
-    let targetDate = new Date(now);
-    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
-    const dateStr = targetDate.toISOString().split('T')[0];
+    const dateStr = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // завтра (UTC)
 
     // Для Москвы (UTC+3) 08:00 локальное = 05:00 UTC.
     // Рабочее время от 09:00 локального (06:00 UTC).
@@ -320,12 +291,9 @@ Content-Type: application/json
     "ends_at": "2026-11-10 11:00:00"
 }
 
-### 20. Создание брони в несуществующей комнате - Ошибка 404
+### 20. Создание брони в несуществующей комнате - Ошибка 422 (валидация room_id)
 < {%
-    const now = new Date();
-    let targetDate = new Date(now);
-    if (now.getUTCHours() >= 14) targetDate.setUTCDate(now.getUTCDate() + 1);
-    const dateStr = targetDate.toISOString().split('T')[0];
+    const dateStr = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // завтра (UTC)
 
     client.global.set("ghost_start", `${dateStr}T10:00:00Z`);
     client.global.set("ghost_end", `${dateStr}T11:00:00Z`);

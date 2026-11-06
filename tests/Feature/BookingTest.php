@@ -7,6 +7,7 @@ use App\Models\Office;
 use App\Models\Room;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -69,6 +70,8 @@ class BookingTest extends TestCase
         ]);
 
         $response->assertStatus(409);
+        // После нарушения ограничения соединение остаётся рабочим (SAVEPOINT в сервисе).
+        $this->assertDatabaseCount('bookings', 1);
     }
 
     public function test_can_book_touching_slots()
@@ -87,7 +90,7 @@ class BookingTest extends TestCase
         $response = $this->actingAs($this->user)->postJson('/api/bookings', [
             'room_id' => $this->roomMoscow->id,
             'title' => 'Meeting 2',
-                            'starts_at' => $end->toIso8601String(),
+            'starts_at' => $end->toIso8601String(),
             'ends_at' => $end->copy()->addHour()->toIso8601String(),
         ]);
 
@@ -200,5 +203,53 @@ class BookingTest extends TestCase
         ]);
 
         $response->assertStatus(401);
+    }
+
+    public function test_database_rejects_overlapping_booking_bypassing_service()
+    {
+        $start = Carbon::tomorrow('Europe/Moscow')->setHour(10)->setMinute(0)->setSecond(0)->utc();
+
+        Booking::create([
+            'room_id' => $this->roomMoscow->id,
+            'user_id' => $this->user->id,
+            'title' => 'Existing',
+            'starts_at' => $start,
+            'ends_at' => $start->copy()->addHour(),
+        ]);
+
+        try {
+            Booking::create([
+                'room_id' => $this->roomMoscow->id,
+                'user_id' => $this->user->id,
+                'title' => 'Overlapping',
+                'starts_at' => $start->copy()->addMinutes(30),
+                'ends_at' => $start->copy()->addMinutes(90),
+            ]);
+            $this->fail('Ограничение bookings_no_overlap не сработало');
+        } catch (QueryException $e) {
+            $this->assertSame('23P01', $e->getCode());
+        }
+    }
+
+    public function test_database_allows_touching_bookings_and_other_rooms()
+    {
+        $start = Carbon::tomorrow('Europe/Moscow')->setHour(10)->setMinute(0)->setSecond(0)->utc();
+        $end = $start->copy()->addHour();
+
+        foreach ([
+            [$this->roomMoscow, $start, $end],
+            [$this->roomMoscow, $end, $end->copy()->addHour()],
+            [$this->roomNovosibirsk, $start, $end],
+        ] as [$room, $startsAt, $endsAt]) {
+            Booking::create([
+                'room_id' => $room->id,
+                'user_id' => $this->user->id,
+                'title' => 'Meeting',
+                'starts_at' => $startsAt,
+                'ends_at' => $endsAt,
+            ]);
+        }
+
+        $this->assertDatabaseCount('bookings', 3);
     }
 }

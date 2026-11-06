@@ -3,16 +3,19 @@
 namespace App\Services;
 
 use App\Exceptions\BookingValidationException;
+use App\Exceptions\RoomUnavailableException;
 use App\Models\Booking;
 use App\Models\Room;
 use App\ValueObjects\BookingInterval;
-use App\Exceptions\RoomUnavailableException;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Database\QueryException;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 
 class BookingService
 {
+    /** SQLSTATE PostgreSQL: нарушение EXCLUDE-ограничения. */
+    private const string EXCLUSION_VIOLATION = '23P01';
+
     public function createBooking(int $userId, array $data): Booking
     {
         $room = Room::with('office')->findOrFail($data['room_id']);
@@ -25,36 +28,23 @@ class BookingService
 
         // проверка БЛ
         $validationResult = $interval->validate();
-        if (!$validationResult->isValid) {
+        if (! $validationResult->isValid) {
             throw new BookingValidationException($validationResult->errors);
         }
 
         try {
-            return DB::transaction(function () use ($userId, $room, $interval, $data) {
-                Room::where('id', $room->id)->lockForUpdate()->first();
-
-                $overlap = Booking::where('room_id', $room->id)
-                    ->where(function ($query) use ($interval) {
-                        $query->where('starts_at', '<', $interval->endsAt)
-                            ->where('ends_at', '>', $interval->startsAt);
-                    })
-                    ->exists();
-
-                if ($overlap) {
-                    throw new RoomUnavailableException();
-                }
-                return Booking::create([
-                    'room_id' => $room->id,
-                    'user_id' => $userId,
-                    'title' => $data['title'],
-                    'starts_at' => $interval->startsAt,
-                    'ends_at' => $interval->endsAt,
-                ]);
-            });
+            return DB::transaction(fn (): Booking => Booking::create([
+                'room_id' => $room->id,
+                'user_id' => $userId,
+                'title' => $data['title'],
+                'starts_at' => $interval->startsAt,
+                'ends_at' => $interval->endsAt,
+            ]));
         } catch (QueryException $e) {
-            if ($e->getCode() === 'P0001' || str_contains($e->getMessage(), 'Room is already booked')) {
-                throw new RoomUnavailableException();
+            if ($e->getCode() === self::EXCLUSION_VIOLATION) {
+                throw new RoomUnavailableException;
             }
+
             throw $e;
         }
     }

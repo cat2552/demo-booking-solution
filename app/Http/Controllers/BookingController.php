@@ -43,11 +43,11 @@ class BookingController extends Controller
     public function store(StoreBookingRequest $request): JsonResponse
     {
         try {
-            // ИСПОЛЬЗУЕМ СЕРВИС: Теперь контроллер не создает запись напрямую,
-            // а делегирует это сервису. Это решает проблему «мертвого кода».
+            // ИСПОЛЬЗУЕМ СЕРВИС: Контроллер не создает запись напрямую,
+            // а делегирует это сервису.
             $booking = $this->bookingService->createBooking(
                 $request->user()->id,
-                $request->validated()
+                $request->validated(),
             );
 
             Log::channel('bookings')->info('Booking created', [
@@ -62,7 +62,16 @@ class BookingController extends Controller
         } catch (RoomUnavailableException $e) {
             return response()->json(['error' => 'Комната занята'], 409);
         } catch (\Throwable $e) {
-            return response()->json(['error' => 'Server Error'], 500);
+            // Пишем фатал в логи для дальнейшего ращбора - что по шло не так
+            Log::error("Unexpected booking error: " . $e->getMessage(), [
+                'exception' => $e,
+                'user_id' => $request->user()->id,
+                'payload' => $request->all(),
+            ]);
+            return response()->json([
+                'error' => 'Произошла внутренняя ошибка сервера. Пожалуйста, попробуйте позже.',
+                'code' => 'INTERNAL_SERVER_ERROR'
+            ], 500);
         }
     }
 
